@@ -1,0 +1,13 @@
+{
+  "min_filename_length": 4,
+  "path_mapping": {
+    "__注释1__": "【左侧】Emby宿主机路径 ：【右侧】CD2宿主机路径",
+    "__注释2__": "【高级写法】指定路径 + 关闭空目录清理 (比如只想删视频，保留文件夹)",
+    "/mnt/share/movies": {
+      "local_path": "/volume1/docker/CloudNAS/CloudDrive/115open/movies",
+      "clean_dirs": false
+  },
+    "__注释3__": "【简单写法】只写路径，默认会清理空目录 (保持原有行为)",
+    "/mnt/share/tv": "/volume1/docker/CloudNAS/CloudDrive/115open/tv"
+  }
+}

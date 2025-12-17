@@ -1,0 +1,18 @@
+services:
+  emby-cd2-sync-cleaner:
+    container_name: emby-cd2-sync-cleaner
+    image: ch1swill/emby-cd2-sync-cleaner:latest
+    restart: unless-stopped
+    ports:
+      # 左边是宿主机端口(可改)，右边是容器内部端口(固定5005)
+      - "5005:5005"
+    volumes:
+      # 1. 挂载配置文件
+      - ./config.json:/app/config.json
+      # 2. 挂载网盘目录 (最关键的一步！)
+      # 格式: - 宿主机CD2挂载路径 : 容器内路径
+      # 建议保持两边一致，避免混乱
+      - /volume1/docker/CloudNAS:/volume1/docker/CloudNAS
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1

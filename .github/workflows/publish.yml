@@ -18,7 +18,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: ch1swill/db-to-bm
+          images: ch1swill/emby-cd2-sync-cleaner
           tags: |
             type=ref,event=branch
             type=ref,event=tag

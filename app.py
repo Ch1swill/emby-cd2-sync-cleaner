@@ -1,6 +1,9 @@
 import os
+import sys
 import json
 import logging
+import threading
+import time
 from flask import Flask, request, jsonify
 from waitress import serve
 
@@ -25,6 +28,62 @@ def load_config():
         return {}, 4
 
 PATH_MAPPING, MIN_FILENAME_LENGTH = load_config()
+
+# ================= 挂载检测 =================
+MOUNT_CHECK_INTERVAL = int(os.environ.get('MOUNT_CHECK_INTERVAL', 30))  # 检测间隔(秒)
+MOUNT_CHECK_ENABLED = os.environ.get('MOUNT_CHECK_ENABLED', 'true').lower() == 'true'
+
+def get_mount_paths():
+    """从配置中提取所有需要监控的挂载路径"""
+    paths = []
+    for config_value in PATH_MAPPING.values():
+        if isinstance(config_value, dict):
+            path = config_value.get('local_path', '')
+        else:
+            path = str(config_value)
+        if path:
+            paths.append(path)
+    return paths
+
+def check_mounts():
+    """检查所有挂载点是否可用"""
+    mount_paths = get_mount_paths()
+    if not mount_paths:
+        return True
+
+    for path in mount_paths:
+        if not os.path.exists(path):
+            return False
+        # 尝试列出目录内容，确认挂载真正可用
+        try:
+            os.listdir(path)
+        except OSError:
+            return False
+    return True
+
+def mount_monitor():
+    """后台线程：定期检测挂载状态"""
+    logging.info(f"🔍 挂载监控已启动，检测间隔: {MOUNT_CHECK_INTERVAL}秒")
+
+    while True:
+        time.sleep(MOUNT_CHECK_INTERVAL)
+        if not check_mounts():
+            logging.error("❌ 检测到CD2挂载丢失，容器将自动重启...")
+            time.sleep(2)  # 等待日志写入
+            os._exit(1)  # 强制退出，触发Docker重启
+
+def start_mount_monitor():
+    """启动挂载监控线程"""
+    if not MOUNT_CHECK_ENABLED:
+        logging.info("⏸️ 挂载监控已禁用 (MOUNT_CHECK_ENABLED=false)")
+        return
+
+    if not get_mount_paths():
+        logging.warning("⚠️ 未配置挂载路径，跳过挂载监控")
+        return
+
+    monitor_thread = threading.Thread(target=mount_monitor, daemon=True)
+    monitor_thread.start()
 # ===========================================
 
 app = Flask(__name__)
@@ -161,5 +220,6 @@ def emby_webhook():
 
 if __name__ == '__main__':
     run_port = int(os.environ.get('APP_PORT', DEFAULT_PORT))
+    start_mount_monitor()  # 启动挂载监控
     logging.info(f"🚀 服务已启动，监听端口: {run_port}")
     serve(app, host='0.0.0.0', port=run_port)

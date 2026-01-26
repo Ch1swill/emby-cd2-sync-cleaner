@@ -64,6 +64,8 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
+      - MOUNT_CHECK_ENABLED=true
+      - MOUNT_CHECK_INTERVAL=30
 
 ```
 

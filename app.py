@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 import time
+import re
 from flask import Flask, request, jsonify
 from waitress import serve
 
@@ -28,6 +29,28 @@ def load_config():
         return {}, 4
 
 PATH_MAPPING, MIN_FILENAME_LENGTH = load_config()
+
+def extract_media_title(filename):
+    """
+    从文件名中提取媒体标题
+    支持格式:
+    - 电影: "疯狂动物城2 (2025).1080p.x264" -> "疯狂动物城2 (2025)"
+    - 电视剧: "白莲花度假村 S01E05 2160p.CHDWEB" -> "白莲花度假村 S01E05"
+    - 电视剧: "白莲花度假村 S01E05.2160p.CHDWEB" -> "白莲花度假村 S01E05"
+    如果无法提取，返回 None
+    """
+    # 优先匹配电视剧格式: "标题 S01E05" 或 "标题 S01E05."
+    # 支持 S01E05, S1E5, S01E05E06 (多集) 等格式
+    tv_match = re.match(r'^(.+?[\s\.]+S\d{1,2}E\d{1,2}(?:E\d{1,2})?)', filename, re.IGNORECASE)
+    if tv_match:
+        return tv_match.group(1).rstrip('.')
+
+    # 匹配电影格式: "标题 (年份)"
+    movie_match = re.match(r'^(.+?\s*\(\d{4}\))', filename)
+    if movie_match:
+        return movie_match.group(1)
+
+    return None
 
 # ================= 挂载检测 =================
 MOUNT_CHECK_INTERVAL = int(os.environ.get('MOUNT_CHECK_INTERVAL', 30))  # 检测间隔(秒)
@@ -126,7 +149,16 @@ def emby_webhook():
     file_name_full = os.path.basename(emby_path)
     base_name = os.path.splitext(file_name_full)[0]
     
-    logging.info(f"🎯 锁定目标: {base_name} (原路径: {emby_path})")
+    # 尝试提取媒体标题（如 "疯狂动物城2 (2025)"）
+    media_title = extract_media_title(base_name)
+    if media_title:
+        logging.info(f"🎯 锁定目标: {base_name} (原路径: {emby_path})")
+        logging.info(f"📽️ 识别媒体标题: {media_title} (将匹配所有相关文件)")
+        match_prefix = media_title
+    else:
+        logging.info(f"🎯 锁定目标: {base_name} (原路径: {emby_path})")
+        logging.info(f"⚠️ 无法提取媒体标题，使用完整文件名匹配")
+        match_prefix = base_name
 
     if len(base_name) < MIN_FILENAME_LENGTH:
         logging.warning(f"🛑 文件名过短，停止操作。")
@@ -189,9 +221,9 @@ def emby_webhook():
 
     for root, dirs, files in os.walk(target_search_dir, topdown=False):
         for file in files:
-            if file.startswith(base_name):
+            if file.startswith(match_prefix):
                 fname_no_ext = os.path.splitext(file)[0]
-                if fname_no_ext == base_name or file.startswith(base_name + "."):
+                if fname_no_ext == match_prefix or file.startswith(match_prefix + "."):
                     file_path = os.path.join(root, file)
                     try:
                         os.remove(file_path)
@@ -215,7 +247,7 @@ def emby_webhook():
     if deleted_count > 0:
         return jsonify({"status": "success", "deleted": deleted_count}), 200
     else:
-        logging.warning(f"⚠️ 未找到名为 {base_name} 的文件。")
+        logging.warning(f"⚠️ 未找到匹配 [{match_prefix}] 的文件。")
         return jsonify({"status": "not_found"}), 200
 
 if __name__ == '__main__':

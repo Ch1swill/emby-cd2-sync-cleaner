@@ -141,14 +141,93 @@ def emby_webhook():
     if not emby_path:
         return jsonify({"status": "no_path"}), 200
 
-    # 2. 检查 .strm 后缀
-    if not emby_path.lower().endswith('.strm'):
-        logging.info(f"🚫 忽略非 strm 文件/目录: {emby_path}")
-        return jsonify({"status": "ignored_not_strm"}), 200
+    # 2. 判断是文件还是目录删除
+    is_directory_delete = not emby_path.lower().endswith('.strm')
 
+    if is_directory_delete:
+        # ========== 目录删除模式 ==========
+        # 先检查是否有匹配的映射且 clean_dirs=true
+        sorted_mappings = sorted(PATH_MAPPING.items(), key=lambda x: len(x[0]), reverse=True)
+        enable_clean_dirs = False
+        cloud_root = None
+
+        for emby_root, config_value in sorted_mappings:
+            if emby_path.startswith(emby_root):
+                if isinstance(config_value, dict):
+                    enable_clean_dirs = config_value.get('clean_dirs', True)
+                    cloud_root = config_value.get('local_path', '')
+                else:
+                    enable_clean_dirs = True
+                    cloud_root = str(config_value)
+                break
+
+        # 如果 clean_dirs=false，按原逻辑忽略目录删除
+        if not enable_clean_dirs:
+            logging.info(f"🚫 忽略非 strm 文件/目录: {emby_path}")
+            return jsonify({"status": "ignored_not_strm"}), 200
+
+        dir_name = os.path.basename(emby_path.rstrip('/\\'))
+
+        # 安全检查：目录名长度
+        if len(dir_name) < MIN_FILENAME_LENGTH:
+            logging.warning(f"🛑 目录名过短 [{dir_name}]，停止操作。")
+            return jsonify({"status": "safety_block"}), 200
+
+        logging.info(f"📁 检测到目录删除: {emby_path}")
+
+        if not cloud_root:
+            logging.warning("⚠️ 未配置监控目录，跳过。")
+            return jsonify({"status": "path_not_mapped"}), 200
+
+        # 计算云存储对应路径
+        for emby_root, _ in sorted_mappings:
+            if emby_path.startswith(emby_root):
+                relative_path = emby_path.replace(emby_root, "", 1)
+                if relative_path.startswith('/') or relative_path.startswith('\\'):
+                    relative_path = relative_path[1:]
+                target_cloud_dir = os.path.join(cloud_root, relative_path)
+                break
+
+        if not os.path.exists(target_cloud_dir):
+            logging.warning(f"⚠️ 云存储目录不存在: {target_cloud_dir}")
+            return jsonify({"status": "cloud_dir_not_found"}), 200
+
+        if not os.path.isdir(target_cloud_dir):
+            logging.warning(f"⚠️ 目标路径不是目录: {target_cloud_dir}")
+            return jsonify({"status": "not_a_directory"}), 200
+
+        # 执行目录删除
+        logging.info(f"🗑️ 准备删除云存储目录: {target_cloud_dir}")
+
+        deleted_files = 0
+        deleted_dirs = 0
+
+        # 从底部向上删除
+        for root, dirs, files in os.walk(target_cloud_dir, topdown=False):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    os.remove(file_path)
+                    logging.info(f"🔪 [文件] 已删除: {file_path}")
+                    deleted_files += 1
+                except Exception as e:
+                    logging.error(f"❌ 删除文件失败: {file_path} - {e}")
+
+            # 删除空目录
+            try:
+                os.rmdir(root)
+                logging.info(f"🧹 [目录] 已删除: {root}")
+                deleted_dirs += 1
+            except Exception as e:
+                logging.error(f"❌ 删除目录失败: {root} - {e}")
+
+        logging.info(f"✅ 目录删除完成: 删除 {deleted_files} 个文件, {deleted_dirs} 个目录")
+        return jsonify({"status": "success", "deleted_files": deleted_files, "deleted_dirs": deleted_dirs}), 200
+
+    # ========== 单文件删除模式 (.strm) ==========
     file_name_full = os.path.basename(emby_path)
     base_name = os.path.splitext(file_name_full)[0]
-    
+
     # 尝试提取媒体标题（如 "疯狂动物城2 (2025)"）
     media_title = extract_media_title(base_name)
     if media_title:
